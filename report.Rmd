@@ -1,0 +1,380 @@
+---
+title: '`r paste(grpA," VS", grpB,"variant comparison report")`'
+author: "Makis Digaletos"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(tidyr)
+library(stringr)
+library(ggthemes)
+library(plotly)
+library(kableExtra)
+library(VennDiagram)
+library(gridExtra)
+
+get_metrics <- function(class) {
+  class <- list.files(paste0(path,class), recursive = T, full.names = T,pattern = "common.tsv")
+  data=lapply(class, read.table, header=FALSE, sep="\t")
+  
+  for (i in 1:length(data)){
+    data[[i]]<-cbind(data[[i]],class[i])
+  }
+  
+  data_df <- do.call("rbind", data)
+  
+  comp_df <- data_df[,c(1,2,6,8,11,12,16,18,22)]
+  names(comp_df) <- c("grpA_CHR", "grpA_POS", "grpA_QUAL", "grpA_INFO", "grpB_CHR", "grpB_POS", "grpB_QUAL", "grpB_INFO","sample")
+  
+  comp_df$sample <- gsub(x = comp_df$sample, pattern = "/common.tsv","")
+  comp_df$sample <- gsub(x = comp_df$sample, pattern = path,"")
+  comp_df$grpA_INFO <- gsub(pattern="0.0,", x=comp_df$grpA_INFO, replacement="")
+  comp_df$grpB_INFO <- gsub(pattern="0.0,", x=comp_df$grpB_INFO, replacement="")
+
+  comp_df$grpA_DP      <- str_extract(comp_df$grpA_INFO, pattern = "DP=[+-]?([0-9]*[.])?[0-9]+")
+  comp_df$grpB_DP       <- str_extract(comp_df$grpB_INFO, pattern = "DP=[+-]?([0-9]*[.])?[0-9]+")
+  comp_df$grpA_QD      <- str_extract(comp_df$grpA_INFO, pattern = "QD=[+-]?([0-9]*[.])?[0-9]+")
+  comp_df$grpB_QD       <- str_extract(comp_df$grpB_INFO, pattern = "QD=[+-]?([0-9]*[.])?[0-9]+")
+  comp_df$grpA_AF      <- str_extract(comp_df$grpA_INFO, pattern = "AF=[+-]?([0-9]*[.])?[0-9]+")
+  comp_df$grpB_AF       <- str_extract(comp_df$grpB_INFO, pattern = "AF=[+-]?([0-9]*[.])?[0-9]+")
+  comp_df$grpA_rsid    <- str_extract(comp_df$grpA_INFO, pattern = "rs[[:digit:]]+")
+  comp_df$grpA_pchange <- str_extract(comp_df$grpA_INFO, pattern = "p.[:alpha:][:alpha:][:alpha:][[:digit:]]+[:alpha:][:alpha:][:alpha:]")
+  
+  comp_df$grpA_DP <- as.numeric(gsub(pattern = "DP=",replacement = "",x = comp_df$grpA_DP))
+  comp_df$grpA_QD <- as.numeric(gsub(pattern = "QD=",replacement = "",x = comp_df$grpA_QD))
+  comp_df$grpA_AF <- as.numeric(gsub(pattern = "AF=",replacement = "",x = comp_df$grpA_AF))
+  comp_df$grpB_DP  <- as.numeric(gsub(pattern = "DP=",replacement = "",x = comp_df$grpB_DP))
+  comp_df$grpB_QD  <- as.numeric(gsub(pattern = "QD=",replacement = "",x = comp_df$grpB_QD))
+  comp_df$grpB_AF  <- as.numeric(gsub(pattern = "AF=",replacement = "",x = comp_df$grpB_AF))
+  
+  comp_df$grpA_QUAL <- as.numeric(comp_df$grpA_QUAL)
+  comp_df$grpB_QUAL <- as.numeric(comp_df$grpB_QUAL)
+  return(comp_df)
+}  
+comp_df_filtered <- get_metrics("filtered")
+comp_df_non_filtered <- get_metrics("non_filtered")
+
+get_venns <- function(class) {
+  unique <- list.files(paste0(path,class), recursive = T, full.names = T,pattern = "common.tsv")
+  only_grpA <- list.files(paste0(path,class), recursive = T, full.names = T,pattern = paste0(grpA,"_only.tsv"))
+  only_grpB <- list.files(paste0(path,class), recursive = T, full.names = T,pattern = paste0(grpB,"_only.tsv"))
+
+  resultList <- list(
+    "uniques" = unique,
+    "grpA" = only_grpA,
+    "grpB" = only_grpB
+  )
+
+  return(resultList)
+}
+
+get_tables <- function(class) {
+  unique <- list.files(paste0(path,class), recursive = T, full.names = T,pattern = "common.tsv")
+  only_grpA <- list.files(paste0(path,class), recursive = T, full.names = T,pattern = paste0(grpA,"_only.tsv"))
+  only_grpB <- list.files(paste0(path,class), recursive = T, full.names = T,pattern = paste0(grpB,"_only.tsv"))
+  
+  uniqueDF <- c()
+  only_grpADF <- c()
+  only_grpBDF <- c()
+  sampleNames <- c()
+
+  for (i in 1:length(unique)) {
+    uniqueDF[i] <- tryCatch(nrow(read.table(unique[i], header=FALSE, sep="\t")),error=function(err) 0)
+    only_grpADF[i] <- tryCatch(nrow(read.table(only_grpA[i], header=FALSE, sep="\t")),error=function(err) 0)
+    only_grpBDF[i] <- tryCatch(nrow(read.table(only_grpB[i], header=FALSE, sep="\t")),error=function(err) 0)
+    sampleNames[i] <- gsub(x = unique[i], pattern = "/common.tsv","")
+    sampleNames[i] <- gsub(x = sampleNames[i], pattern = path,"")
+    sampleNames[i] <- gsub(x = sampleNames[i], pattern = paste0(class,"/"),"")
+  }
+
+  tab <- cbind(only_grpADF, only_grpBDF, uniqueDF)
+  colnames(tab) <- c(paste(grpA,"unique calls"), paste(grpB,"unique calls"), "Common calls")
+  rownames(tab) <- sampleNames
+  return(tab)
+}
+
+```
+The comparison covers the accordance of variant calls restricted in the common regions of the '`r bedA`' and the '`r bedB`' kits.
+To generate common kit regions and common variants within these regions, the next steps were followed:
+
+* Intersect '`r bedA`' and '`r bedB`' kits to find their overlapping regions
+* Find variants in these common regions called in the '`r grpA`' vcf
+* Find variants in these common regions called in the '`r grpB`' vcf
+* Intersect resulting variants from the vcf files of steps (2) and (3)
+
+This process was applied to both filtered and non-filtered variant results.<br />
+
+# Filtered Variants
+
+To filter the variants the following parameters were applied:
+
+1.  Filtered Coverage >= 500
+2.  0.01 <= Allele Frequency <= 1.0
+3.  Variant Effect in *"missense, nonframeshiftInsertion, nonframeshiftDeletion, nonframeshiftBlockSubstitution, nonsense, stoploss, frameshiftInsertion, frameshiftDeletion, frameshiftBlockSubstitution"*
+4.  Variant Zygosity : *Heterozygous*
+## Comparison 
+
+Comparison of variants refers to the filtered variants called in the '`r grpA`' vcf VS variants called in the '`r grpB`' vcf in common genomic regions of '`r bedA`' and '`r bedB`' kits
+
+### Table
+```{r filt_comp_df, echo=FALSE, warning=FALSE}
+comp_df <- get_tables("filtered")
+kable(comp_df, 
+  caption = "Filtered variants in common KIT regions")  %>%
+kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### Venns
+```{r filt_VENNS, echo=FALSE, warning=FALSE}
+compList_filt <- get_venns("filtered")
+
+for (i in 1:length(compList_filt$uniques)) {
+  uniqueDF <- tryCatch(nrow(read.table(compList_filt$uniques[i], header=FALSE, sep="\t")),error=function(err) 0)
+  only_grpADF <- tryCatch(nrow(read.table(compList_filt$grpA[i], header=FALSE, sep="\t")),error=function(err) 0)
+  only_grpBDF <- tryCatch(nrow(read.table(compList_filt$grpB[i], header=FALSE, sep="\t")),error=function(err) 0)
+  
+  compList_filt$uniques[i] <- gsub(x = compList_filt$uniques[i], pattern = "/common.tsv","")
+  subtitle <- gsub(x = compList_filt$uniques[i], pattern = path,"")
+
+  cat(subtitle)
+  venn <- draw.pairwise.venn(
+    area1 = only_grpADF+uniqueDF,
+    area2 = only_grpBDF+uniqueDF,
+    cross.area = uniqueDF,
+    category = c(grpA, grpB),
+    fill = c("tomato", "lightblue"),
+    scaled=TRUE
+    )
+  grid.draw(venn)
+  grid.newpage()
+}
+```
+## Metrics {.tabset}
+
+### QD values comparison (scatter)
+```{r filtered_QD_scatter, echo=FALSE, warning=FALSE}
+ggplotly(ggplot(comp_df_filtered, aes(x=grpA_QD, y=grpB_QD)) +
+  geom_smooth(method="lm", se=T) +
+  geom_point(width = .5, size=1, aes(text=sprintf("AA change: %s", grpA_pchange))) +
+  labs(title="QD values of common variants in common kit regions",
+    subtitle="QualityByDepth as 4*QUAL/FDP (analogous to GATK)",
+    x=grpA,
+    y=grpB) + 
+  facet_grid(sample ~ .), width = 800, height = 600
+)
+```
+
+### QUAL values comparison (scatter)
+```{r filtered_QUAL_scatter, echo=FALSE, warning=FALSE}
+ggplotly(ggplot(comp_df_filtered, aes(x=grpA_QUAL, y=grpB_QUAL)) +
+  geom_smooth(method="lm", se=T) +
+  geom_jitter(width = .5, size=1, aes(text=sprintf("AA change: %s", grpA_pchange))) +
+  labs(title="QUAL values of common variants in common kit regions",
+    x=grpA,
+    y=grpB) + 
+  facet_grid(sample ~ .), width = 800, height = 600
+)
+```
+
+### DP values comparison (scatter)
+```{r filtered_DP_scatter, echo=FALSE, warning=FALSE}
+ggplotly(ggplot(comp_df_filtered, aes(x=grpA_DP, y=grpB_DP)) +
+  geom_smooth(method="lm", se=T) +
+  geom_jitter(width = .5, size=1, aes(text=sprintf("AA change: %s", grpA_pchange))) +
+  labs(title="DP values of common variants in common kit regions",
+    subtitle="DP: Read Depth",
+    x=grpA,
+    y=grpB) + 
+  facet_grid(sample ~ .), width = 800, height = 600
+)
+```
+
+### AF values comparison (scatter)
+```{r filtered_AF_scatter, echo=FALSE, warning=FALSE}
+ggplotly(ggplot(comp_df_filtered, aes(x=grpA_AF, y=grpB_AF)) +
+  geom_smooth(method="lm", se=T) +
+  geom_point(width = .5, size=1, aes(text=sprintf("AA change: %s", grpA_pchange))) +
+  xlim(0.00001,1) +
+  ylim(0.00001,1) +
+  labs(title="AF values of common variants in common kit regions",
+    subtitle="AF: Read Depth",
+    x=grpA,
+    y=grpB) + 
+  facet_grid(sample ~ .), width = 800, height = 600
+)
+```
+
+### QD values comparison (boxplot)
+```{r filtered_QD_boxplot, echo=FALSE, warning=FALSE}
+QD_boxplot_comp <- gather(comp_df_filtered, "KIT", "QD", grpA_QD, grpB_QD)
+ggplotly(ggplot(QD_boxplot_comp, aes(sample,QD)) +
+  geom_boxplot(aes(fill=factor(KIT))) +
+  labs(title="QD values of common variants in common kit regions",
+    subtitle="QualityByDepth as 4*QUAL/FDP (analogous to GATK)",
+    x=paste(grpA,"(grpA) VS",grpB,"(grpB)"),
+    y="QD values"), width = 800, height = 600
+)%>%layout(boxmode = "group")
+```
+
+### QUAL values comparison (boxplot)
+```{r filtered_QUAL_boxplot, echo=FALSE, warning=FALSE}
+QUAL_boxplot_comp <- gather(comp_df_filtered, "KIT", "QUAL", grpA_QUAL, grpB_QUAL)
+ggplotly(ggplot(QUAL_boxplot_comp, aes(sample,QUAL)) +
+  geom_boxplot(aes(fill=factor(KIT))) +
+  labs(title="QUAL values of common variants in common kit regions",
+    x=paste(grpA,"(grpA) VS",grpB,"(grpB)"),
+    y="QUAL values"), width = 800, height = 600
+)%>%layout(boxmode = "group")
+```
+
+### DP values comparison (boxplot)
+```{r filtered_DP_boxplot, echo=FALSE, warning=FALSE}
+DP_boxplot_comp <- gather(comp_df_filtered, "KIT", "DP", grpA_DP, grpB_DP)
+ggplotly(ggplot(DP_boxplot_comp, aes(sample,DP)) +
+  geom_boxplot(aes(fill=factor(KIT))) +
+  labs(title="DP values of common variants in common kit regions",
+    subtitle="DP: Read Depth",
+    x=paste(grpA,"(grpA) VS",grpB,"(grpB)"),
+    y="DP values"), width = 800, height = 600
+)%>%layout(boxmode = "group")
+```
+
+# Non-Filtered variants
+
+The standard IonReporter pipeline was executed here as well, without any filtering in the variant calls.
+
+
+## Comparison
+
+Comparison of variants refers to the non_filtered variants called in the '`r grpA`' vcf VS variants called in the '`r grpB`' vcf in common genomic regions of '`r bedA`' and '`r bedB`' kits
+
+### Table
+```{r non_filt_comp_df, echo=FALSE, warning=FALSE}
+comp_df <- get_tables("non_filtered")
+kable(comp_df, 
+  caption = "Non-Filtered variants in common KIT regions")  %>%
+kable_styling(bootstrap_options = c("striped", "hover"))
+```
+### Venns
+```{r non_filt_VENNS, echo=FALSE, warning=FALSE}
+compList_non_filt <- get_venns("non_filtered")
+
+for (i in 1:length(compList_non_filt$uniques)) {
+  uniqueDF <- tryCatch(nrow(read.table(compList_non_filt$uniques[i], header=FALSE, sep="\t")),error=function(err) 0)
+  only_grpADF <- tryCatch(nrow(read.table(compList_non_filt$grpA[i], header=FALSE, sep="\t")),error=function(err) 0)
+  only_grpBDF <- tryCatch(nrow(read.table(compList_non_filt$grpB[i], header=FALSE, sep="\t")),error=function(err) 0)
+  
+  compList_non_filt$uniques[i] <- gsub(x = compList_non_filt$uniques[i], pattern = "/common.tsv","")
+  subtitle <- gsub(x = compList_non_filt$uniques[i], pattern = path,"")
+
+  cat(subtitle)
+  venn <- draw.pairwise.venn(
+    area1 = only_grpADF+uniqueDF,
+    area2 = only_grpBDF+uniqueDF,
+    cross.area = uniqueDF,
+    category = c(grpA, grpB),
+    fill = c("tomato", "lightblue"),
+    scaled=TRUE
+    )
+  grid.draw(venn)
+  grid.newpage()
+}
+```
+## Metrics  {.tabset}
+### QD values comparison (scatter)
+```{r non_filtered_QD_scatter, echo=FALSE, warning=FALSE}
+ggplotly(ggplot(comp_df_non_filtered, aes(x=grpA_QD, y=grpB_QD)) +
+  geom_smooth(method="lm", se=T) +
+  geom_jitter(width = .5, size=1, aes(text=sprintf("AA change: %s", grpA_pchange))) +
+  labs(title="QD values of common variants in common kit regions",
+    subtitle="QualityByDepth as 4*QUAL/FDP (analogous to GATK)",
+    x="grpA vcf QD values",
+    y="grpB vcf QD values") + 
+  facet_grid(sample ~ .), width = 800, height = 600
+)
+```
+
+### QUAL values comparison (scatter)
+```{r non_filtered_QUAL_scatter, echo=FALSE, warning=FALSE}
+ggplotly(ggplot(comp_df_non_filtered, aes(x=grpA_QUAL, y=grpB_QUAL)) +
+  geom_smooth(method="lm", se=T) +
+  geom_jitter(width = .5, size=1, aes(text=sprintf("AA change: %s", grpA_pchange))) +
+  labs(title="QUAL values of common variants in common kit regions",
+    x="grpA vcf QUAL values",
+    y="grpB vcf QUAL values") + 
+  facet_grid(sample ~ .), width = 800, height = 600
+)
+```
+
+### DP values comparison (scatter)
+```{r non_filtered_DP_scatter, echo=FALSE, warning=FALSE}
+ggplotly(ggplot(comp_df_non_filtered, aes(x=grpA_DP, y=grpB_DP)) +
+  geom_smooth(method="lm", se=T) +
+  geom_jitter(width = .5, size=1, aes(text=sprintf("AA change: %s", grpA_pchange))) +
+  labs(title="DP values of common variants in common kit regions",
+    subtitle="DP: Read Depth",
+    x="grpA vcf DP values",
+    y="grpB vcf DP values") + 
+  facet_grid(sample ~ .), width = 800, height = 600
+)
+```
+
+### AF values comparison (scatter)
+```{r non_filtered_AF_scatter, echo=FALSE, warning=FALSE}
+ggplotly(ggplot(comp_df_non_filtered, aes(x=grpA_AF, y=grpB_AF)) +
+  geom_smooth(method="lm", se=T) +
+  geom_point(width = .5, size=1, aes(text=sprintf("AA change: %s", grpA_pchange))) +
+  xlim(0.00001,1) +
+  ylim(0.00001,1) +
+  labs(title="AF values of common variants in common kit regions",
+    subtitle="AF: Read Depth",
+    x="grpA vcf AF values",
+    y="grpB vcf AF values") + 
+  facet_grid(sample ~ .), width = 800, height = 600
+)
+```
+
+### QD values comparison (boxplot)
+```{r non_filtered_QD_boxplot, echo=FALSE, warning=FALSE}
+QD_boxplot_comp <- gather(comp_df_non_filtered, "KIT", "QD", grpA_QD, grpB_QD)
+ggplotly(ggplot(QD_boxplot_comp, aes(sample,QD)) +
+  geom_boxplot(aes(fill=factor(KIT))) +
+  labs(title="QD values of common variants in common kit regions",
+    subtitle="QualityByDepth as 4*QUAL/FDP (analogous to GATK)",
+    x=paste(grpA,"(grpA) VS",grpB,"(grpB)"),
+    y="QD values"), width = 800, height = 600
+)%>%layout(boxmode = "group")
+```
+
+### QUAL values comparison (boxplot)
+```{r non_filtered_QUAL_boxplot, echo=FALSE, warning=FALSE}
+QUAL_boxplot_comp <- gather(comp_df_non_filtered, "KIT", "QUAL", grpA_QUAL, grpB_QUAL)
+ggplotly(ggplot(QUAL_boxplot_comp, aes(sample,QUAL)) +
+  geom_boxplot(aes(fill=factor(KIT))) +
+  labs(title="QUAL values of common variants in common kit regions",
+    x=paste(grpA,"(grpA) VS",grpB,"(grpB)"),
+    y="QUAL values"), width = 800, height = 600
+)%>%layout(boxmode = "group")
+```
+
+### DP values comparison (boxplot)
+```{r non_filtered_DP_boxplot, echo=FALSE, warning=FALSE}
+DP_boxplot_comp <- gather(comp_df_non_filtered, "KIT", "DP", grpA_DP, grpB_DP)
+ggplotly(ggplot(DP_boxplot_comp, aes(sample,DP)) +
+  geom_boxplot(aes(fill=factor(KIT))) +
+  labs(title="DP values of common variants in common kit regions",
+    subtitle="DP: Read Depth",
+    x=paste(grpA,"(grpA) VS",grpB,"(grpB)"),
+    y="DP values"), width = 800, height = 600
+)%>%layout(boxmode = "group")
+```
+
